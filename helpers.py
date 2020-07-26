@@ -139,11 +139,6 @@ class Timer:
 
 
 ##################### Numpy & Jax Standardization #####################
-def outer(x, y, func=jnp.multiply):
-    a, b = arrify(x), arrify(y)
-    a, b = a.reshape(list(a.shape) + [1] * b.ndim), b.reshape(a.ndim * [1] + list(b.shape))
-    return func(a, b)
-
 def put(arr, vals=0, idx=None):
     try:
         arr = arr.at[idx].set(vals)  # jax
@@ -216,7 +211,7 @@ class jax_RandomState():
         if cov is None:
             cov = jnp.eye(dim)
             print(f"cov not specified; using identity matrix")
-        cov = self._arrayify(cov)
+        cov = arrify(cov)
         sh = cov.shape
         if (len(sh) != 2) or (sh[0] != dim) or (sh[0] != sh[1]):
             raise Exception(f"cov has shape {sh}; should be ({dim}, {dim})")
@@ -236,6 +231,35 @@ class jax_RandomState():
 
     def permutation(self, x):
         return jax.random.permutation(self.key, x)
+
+
+##################### Geometry & Linear Algebra #####################
+def outer(x, y, func=jnp.multiply):
+    a, b = arrify(x), arrify(y)
+    a, b = a.reshape(list(a.shape) + [1] * b.ndim), b.reshape(a.ndim * [1] + list(b.shape))
+    return func(a, b)
+
+def extend_ONB(X):
+    X = arrify(X).astype(float).copy()
+    sh = X.shape
+    # must be 2D
+    if len(sh) == 1:
+        X = X[:, jnp.newaxis]
+        sh = X.shape
+    elif len(sh) > 2:
+        raise Exception(f"array made be 2D; given shape {sh}")
+    
+    # make n_rows >= n_cols
+    if sh[0] < sh[1]:
+        X = X.T
+    dim, n = X.shape
+    # Extend to ONB using QR-factorization
+    Q, _ = jnp.linalg.qr(X, mode='complete')
+    # QR may flip signs on specified column vectors.  Check and flip back.
+    # For first n columns, multiply top row of X and Q, then multiply Q by resulting signs
+    # Q[:, :n] *= np.sign(X[0] * Q[0, :n])  
+    Q = mul(Q, jnp.sign(X[0]), [slice(), slice(:n)])
+    return Q
 
 
 ##################### Smart Chooser Between Numpy & Jax #####################
@@ -280,3 +304,27 @@ def pick_jnp(num_part=1, seed=42, force_numpy=False, force_jax=False):
         import numpy as jnp
         rng = np.random.RandomState(seed)
     return rng
+
+
+##################### Billiards #####################
+def perturb(v):
+    import scipy.stats as stats
+    dim = len(v)
+    assert dim >= 2, "len(v) must be >= 2"
+
+    T = extend_ONB(v)
+
+    R1 = jnp.eye(dim)
+    theta = rng.uniform(low=tol, high=2*np.pi / 100)
+    c, s = jnp.cos(theta), np.sin(theta)
+    R1[:2, :2] = [[c, -s], [s,c]]
+
+    R2 = jnp.eye(dim)
+    if dim == 2:
+        R2[1, 1] = rng.choice([-1,1])
+    else:
+        R2[1:, 1:] = stats.special_ortho_group(dim-1).rvs()
+
+    A = T @ R2 @ R1 @ T.T
+    w = A @ v
+    return w
