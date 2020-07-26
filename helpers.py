@@ -39,6 +39,105 @@ def metric_prefix(x, sigfigs=3):
                 num = format(y, f'.{c}f')
             return f'{num} {pref}'
 
+
+##################### OVERLY FANCY CUSTOM TIMER #####################
+import functools
+import time
+from dataclasses import field#, dataclass
+from datadict import dataclass
+from typing import Any, Callable, ClassVar, Dict, Optional
+
+class TimerError(Exception):
+    """A custom exception used to report errors in use of Timer class"""
+
+@dataclass
+class Timer:
+    """Time your code using a class, context manager, or decorator"""
+
+    timers: ClassVar[Dict[str, float]] = dict()
+    name: Optional[str] = None
+    # text: str = "Mean elapsed time: {:0.4f} seconds over {} loops"
+    text: str = "Mean elapsed time: {}s over {} loops"
+    logger: Optional[Callable[[str], None]] = print
+    _start_time: Optional[float] = field(default=None, init=False, repr=False)
+    loop_time: float = -1.0
+    quiet: bool = False
+
+    def __post_init__(self) -> None:
+        """Initialization: add timer to dict of timers"""
+        if self.name:
+            self.timers.setdefault(self.name, 0)
+        self.loops = 0
+        self.elapsed_time = 0.0
+
+    def __mean_time__(self) -> float:
+        if self.loops <= 0:
+            self.mean_time = 0.0
+        else:
+            self.mean_time = self.elapsed_time / self.loops
+        return self.mean_time
+
+    def start(self) -> None:
+        """Start a new timer"""
+        if self._start_time is not None:
+            raise TimerError(f"Timer is running. Use .stop() to stop it")
+        self._start_time = time.perf_counter()
+
+    def stop(self) -> float:
+        """Stop the timer"""
+        if self._start_time is None:
+            raise TimerError(f"Timer is not running. Use .start() to start it")
+
+        # Calculate elapsed time
+        self.elapsed_time += (time.perf_counter() - self._start_time)
+        self.loops += 1
+        self._start_time = None
+        if self.name:
+            self.timers[self.name] = self.__mean_time__()
+        return self.__mean_time__()
+
+    def __report__(self) -> None:
+        # Report elapsed time
+        decimals = 2
+        if self.logger:
+            self.logger(self.text.format(metric_prefix(self.__mean_time__()), self.loops))
+
+    def end(self) -> float:
+        """Stop the timer, and report the elapsed time"""
+        if self._start_time is not None:
+            self.stop()
+        if not self.quiet:
+            self.__report__()
+        return self.__mean_time__()
+
+    def __enter__(self) -> "Timer":
+        """Start a new timer as a context manager"""
+        self.start()
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        """Stop the context manager timer"""
+        self.end()
+
+    def __call__(self, func) -> "Decorator":
+        """Support using Timer as a decorator w/added looping functionality"""
+        @functools.wraps(func)
+        def wrapper_timer(*args, **kwargs):
+            if self.loop_time > 0:
+                # Execute function once to clear initial overhead before timing
+                out = func(*args, **kwargs)
+                while self.elapsed_time < self.loop_time:
+                    self.start()
+                    func(*args, **kwargs)
+                    self.stop()
+                self.end()
+                return out
+            else:
+                with self:
+                    return func(*args, **kwargs)
+        return wrapper_timer
+
+
 ##################### Numpy & Jax Standardization #####################
 def outer(x, y, func=jnp.multiply):
     a, b = arrify(x), arrify(y)
@@ -138,6 +237,8 @@ class jax_RandomState():
     def permutation(self, x):
         return jax.random.permutation(self.key, x)
 
+
+##################### Smart Chooser Between Numpy & Jax #####################
 def pick_jnp(num_part=1, seed=42, force_numpy=False, force_jax=False):
     """
     Determines whether to use jax or numpy.  Can force it, or allow detection.
