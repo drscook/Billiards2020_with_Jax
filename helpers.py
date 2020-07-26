@@ -269,7 +269,7 @@ def pick_jnp(num_part=1, seed=42, force_numpy=False, force_jax=False):
         f_np(nx); f_jax(jx)
         nt, jt = Timer.timers['np'], Timer.timers['jax']
         USE_JAX = jt < nt
-        print(f"For {num_part} particles, numpy time = {metric_prefix(nt)}s vs jax time = {metric(jt)}s")
+        print(f"For {num_part} particles, numpy time = {metric_prefix(nt)}s vs jax time = {metric_prefix(jt)}s")
     
     if USE_JAX is True:
         print("importing jax.numpy as jnp.")
